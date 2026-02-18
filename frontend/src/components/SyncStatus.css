@@ -1,0 +1,53 @@
+.sync-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.last-sync-text {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.sync-button {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background-color: var(--bg-sidebar);
+    color: var(--text-main);
+    transition: all 0.3s;
+}
+
+.sync-button:hover:not(:disabled) {
+    background-color: var(--border-light);
+    transform: rotate(180deg);
+}
+
+.sync-button.syncing {
+    color: var(--color-primary);
+    background-color: var(--bg-sidebar);
+}
+
+.sync-button.syncing svg {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (max-width: 640px) {
+    .last-sync-text {
+        display: none;
+    }
+}

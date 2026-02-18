@@ -1,0 +1,137 @@
+.calendar-container {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    padding: 16px;
+    overflow: hidden;
+}
+
+.calendar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.current-month-label {
+    font-weight: 700;
+    font-size: 0.9375rem;
+}
+
+.calendar-nav {
+    display: flex;
+    gap: 4px;
+}
+
+.calendar-nav button {
+    padding: 4px;
+    border-radius: 6px;
+    color: var(--text-muted);
+    transition: all 0.2s;
+}
+
+.calendar-nav button:hover {
+    background-color: var(--bg-sidebar);
+    color: var(--text-main);
+}
+
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+
+.calendar-weekday {
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    padding-bottom: 8px;
+}
+
+.calendar-day {
+    aspect-ratio: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8125rem;
+    border-radius: 8px;
+    position: relative;
+    cursor: default;
+    color: var(--text-muted);
+}
+
+.calendar-day.outside {
+    opacity: 0.3;
+}
+
+.calendar-day.today {
+    color: var(--color-primary);
+    font-weight: 700;
+}
+
+.calendar-day.has-newsletter {
+    cursor: pointer;
+    color: var(--text-main);
+}
+
+.calendar-day.has-newsletter:hover {
+    background-color: var(--bg-sidebar);
+}
+
+.calendar-day.selected {
+    background-color: var(--color-primary) !important;
+    color: white !important;
+}
+
+.article-count-dot {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    min-width: 14px;
+    height: 14px;
+    background-color: var(--color-secondary);
+    color: white;
+    font-size: 0.625rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    padding: 0 4px;
+}
+
+.calendar-day.selected .article-count-dot {
+    background-color: white;
+    color: var(--color-primary);
+}
+
+.selected-chips {
+    margin-top: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.date-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background-color: var(--bg-sidebar);
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.date-chip button {
+    font-size: 1rem;
+    color: var(--text-muted);
+}
+
+.reset-button {
+    font-size: 0.75rem;
+    color: var(--color-primary);
+    font-weight: 600;
+    margin-left: auto;
+}

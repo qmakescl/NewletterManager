@@ -1,0 +1,77 @@
+export const mockNewsletters = [
+    { date: "2026-02-18", article_count: 5, selectable: true },
+    { date: "2026-02-17", article_count: 4, selectable: true },
+    { date: "2026-02-14", article_count: 3, selectable: true },
+    { date: "2026-02-13", article_count: 6, selectable: true },
+    { date: "2026-02-10", article_count: 2, selectable: true },
+];
+
+export const mockCategories = [
+    { name: "LLM", count: 12 },
+    { name: "Vision", count: 5 },
+    { name: "Agent", count: 8 },
+    { name: "Tools", count: 15 },
+    { name: "Policy", count: 4 },
+    { name: "Research", count: 10 },
+    { name: "Hardware", count: 3 },
+    { name: "Other", count: 3 },
+];
+
+export const mockArticles = [
+    {
+        id: "1",
+        title: "OpenAI Announces GPT-5 with Enhanced Reasoning",
+        summary_en: "OpenAI has officially announced GPT-5, claiming significant improvements in multi-step reasoning and mathematical capabilities.",
+        summary_ko: "OpenAI가 GPT-5를 공식 발표했습니다. 다단계 추론과 수학적 능력에서 상당한 개선이 이루어졌다고 주장합니다.",
+        url: "https://openai.com",
+        category: "LLM",
+        tags: ["openai", "gpt-5", "reasoning"],
+        importance: 5,
+        published_at: "2026-02-18T07:00:00Z",
+    },
+    {
+        id: "2",
+        title: "Claude 4: The Next Frontier in Coding Assistants",
+        summary_en: "Anthropic's latest model Claude 4 shows unprecedented performance in complex software engineering tasks.",
+        summary_ko: "Anthropic의 최신 모델인 Claude 4가 복잡한 소프트웨어 엔지니어링 작업에서 전례 없는 성능을 보여줍니다.",
+        url: "https://anthropic.com",
+        category: "Agent",
+        tags: ["anthropic", "claude-4", "coding"],
+        importance: 5,
+        published_at: "2026-02-18T07:00:00Z",
+    },
+    {
+        id: "3",
+        title: "Sora-Lite: Real-time Video Generation for Mobile",
+        summary_en: "A new lightweight version of Sora has been released, enabling real-time high-quality video generation on smartphones.",
+        summary_ko: "Sora의 새로운 경량 버전이 출시되어 스마트폰에서 실시간 고품질 비디오 생성이 가능해졌습니다.",
+        url: "https://openai.com/sora",
+        category: "Vision",
+        tags: ["sora", "video", "mobile"],
+        importance: 4,
+        published_at: "2026-02-17T07:00:00Z",
+    },
+    {
+        id: "4",
+        title: "AI Safety Summit 2026: New Global Standards",
+        summary_en: "World leaders agreed on a new set of safety standards for advanced AI models during the 2026 Summit.",
+        summary_ko: "2026년 정상회의에서 세계 지도자들이 첨단 AI 모델에 대한 새로운 안전 표준 세트에 합의했습니다.",
+        url: "https://aisafety.org",
+        category: "Policy",
+        tags: ["safety", "summit", "regulation"],
+        importance: 3,
+        published_at: "2026-02-17T07:00:00Z",
+    },
+    {
+        id: "5",
+        title: "Mistral-Small-v3 Released",
+        summary_en: "Mistral AI released v3 of their small model, outperforming Llama 3 in several benchmarks.",
+        summary_ko: "Mistral AI가 자사 소형 모델의 v3를 출시했으며, 여러 벤치마크에서 Llama 3를 능가했습니다.",
+        url: "https://mistral.ai",
+        category: "LLM",
+        tags: ["mistral", "open-source", "benchmark"],
+        importance: 4,
+        published_at: "2026-02-14T07:00:00Z",
+    },
+    // ... 추가 데이터가 필요하면 더 생성 가능
+];

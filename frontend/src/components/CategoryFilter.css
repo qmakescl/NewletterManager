@@ -1,0 +1,81 @@
+.category-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.category-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    font-size: 0.9375rem;
+}
+
+.category-item:hover {
+    background-color: var(--border-light);
+}
+
+.category-item.active {
+    background-color: var(--color-primary);
+    color: white;
+}
+
+.category-item.active .category-count {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.category-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 12px;
+}
+
+.category-dot.all {
+    background-color: var(--text-muted);
+}
+
+.category-dot.llm {
+    background-color: var(--cat-llm);
+}
+
+.category-dot.vision {
+    background-color: var(--cat-vision);
+}
+
+.category-dot.agent {
+    background-color: var(--cat-agent);
+}
+
+.category-dot.tools {
+    background-color: var(--cat-tools);
+}
+
+.category-dot.policy {
+    background-color: var(--cat-policy);
+}
+
+.category-dot.research {
+    background-color: var(--cat-research);
+}
+
+.category-dot.hardware {
+    background-color: var(--cat-hardware);
+}
+
+.category-dot.other {
+    background-color: var(--cat-other);
+}
+
+.category-name {
+    flex: 1;
+}
+
+.category-count {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}

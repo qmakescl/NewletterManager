@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - backend/.env
+    environment:
+      - DATABASE_URL=sqlite:////app/data/tldr.db
+      - CHROMA_PERSIST_DIR=/app/chroma_db
+    volumes:
+      - app_data:/app/data
+      - chroma_data:/app/chroma_db
+      # OAuth 인증 파일 (backend/ 폴더에 미리 준비 필요)
+      - ./backend/credentials.json:/app/backend/credentials.json:ro
+      - ./backend/token.json:/app/backend/token.json
+    restart: unless-stopped
+
+volumes:
+  app_data:
+  chroma_data:

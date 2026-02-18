@@ -1,0 +1,19 @@
+[project]
+name = "newlettermanager"
+version = "0.1.0"
+description = "TLDR AI Newsletter Manager - Gmail 수집, Gemini AI 분류/요약, RAG 검색"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-api-python-client>=2.0",
+    "google-auth-oauthlib>=1.0",
+    "google-genai>=1.0",
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+    "chromadb>=0.4",
+    "apscheduler>=3.10",
+    "beautifulsoup4>=4.12",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+]
