@@ -13,8 +13,14 @@ wheels/
 .env
 credentials.json
 token.json
+
+
+# Code Assistants
 .GEMINI.md
 .CLAUDE.md
+.claude/
+.gemini/
+.antigravity/
 
 # Database files
 *.db
@@ -24,5 +30,6 @@ chroma_db/
 .DS_Store
 
 # Generated artifacts and reports
-artifacts/
-report/
+compact_messages/
+# artifacts/
+# report/
