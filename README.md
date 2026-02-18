@@ -163,6 +163,8 @@ NewletterManager/
 │   ├── token.json               # (자동 생성, Git 제외)
 │   └── .env                     # (직접 생성, Git 제외)
 ├── frontend/                    # 프론트엔드
+├── artifacts/                   # Agent가 생성한 할일 목록과 구현계획
+├── report/                      # Agent 작업을 마치고 생성을 요청한 결과물
 ├── Dockerfile
 ├── docker-compose.yml
 └── pyproject.toml
