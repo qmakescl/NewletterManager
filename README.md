@@ -9,7 +9,7 @@ Gmail로 수신한 TLDR AI 뉴스레터를 자동으로 수집·분류·요약�
 - **벡터 검색**: `gemini-embedding-001` 임베딩 + ChromaDB로 의미 기반 유사 기사 검색
 - **RAG 채팅**: 수집된 기사를 컨텍스트로 활용한 AI 채팅 (Gemini 2.5 Flash Lite)
 - **REST API**: FastAPI 기반 백엔드 (`/api/articles`, `/api/search`, `/api/chat` 등)
-- **Docker 지원**: 단일 컨테이너로 프론트엔드 + 백엔드 통합 배포
+- **Docker 지원** _(선택)_: 단일 컨테이너로 프론트엔드 + 백엔드 통합 배포
 
 ## 기술 스택
 
@@ -20,7 +20,7 @@ Gmail로 수신한 TLDR AI 뉴스레터를 자동으로 수집·분류·요약�
 | Vector DB | ChromaDB (코사인 유사도) |
 | Database | SQLite |
 | Gmail | Google Gmail API v1 (OAuth 2.0) |
-| 배포 | Docker, Docker Compose |
+| 배포 | Docker, Docker Compose _(선택)_ |
 
 ## 사전 요구사항
 
@@ -97,7 +97,10 @@ uv run uvicorn backend.app.main:app --reload --port 8000
 
 서버 시작 후 http://localhost:8000 에서 프론트엔드, http://localhost:8000/docs 에서 API 문서를 확인할 수 있습니다.
 
-### Docker Compose 실행
+### Docker Compose 실행 _(선택)_
+
+`Dockerfile`과 `docker-compose.yml`은 컨테이너 환경 배포를 위한 **선택적 옵션**입니다.
+로컬 `uv` 실행만으로도 모든 기능을 사용할 수 있습니다.
 
 ```bash
 # credentials.json 배치 후
@@ -107,7 +110,8 @@ cp backend/.env.example backend/.env
 docker compose up -d
 ```
 
-> Docker 환경에서는 최초 실행 전에 **로컬에서 한 번 실행하여 `token.json`을 먼저 생성**해두어야 합니다.
+> **주의**: Docker 환경에서는 최초 실행 전에 **로컬에서 한 번 실행하여 `token.json`을 먼저 생성**해두어야 합니다.
+> OAuth 인증은 브라우저가 필요한 대화형 과정이므로 컨테이너 내부에서 직접 수행할 수 없습니다.
 > 생성된 `backend/token.json`은 Docker 컨테이너에 마운트됩니다.
 
 ## 환경 변수
@@ -147,27 +151,63 @@ NEWSLETTER_SENDERS=["dan@tldrnewsletter.com"]
 
 ```
 NewletterManager/
-├── backend/
+├── backend/                         # Python 백엔드 (FastAPI)
 │   ├── app/
-│   │   ├── main.py              # FastAPI 앱 진입점, 스케줄러
-│   │   ├── config.py            # 환경변수 설정 (pydantic-settings)
-│   │   ├── models/              # SQLite 데이터 모델
-│   │   ├── routers/             # API 라우터 (articles, search, chat, sync …)
-│   │   └── services/
-│   │       ├── gmail.py         # Gmail API 동기화
-│   │       ├── gemini.py        # AI 분류·요약·RAG
-│   │       ├── vector.py        # ChromaDB 임베딩·검색
-│   │       ├── parser.py        # 뉴스레터 HTML 파싱
-│   │       └── db.py            # SQLite CRUD
-│   ├── credentials.json         # (직접 배치, Git 제외)
-│   ├── token.json               # (자동 생성, Git 제외)
-│   └── .env                     # (직접 생성, Git 제외)
-├── frontend/                    # 프론트엔드
-├── artifacts/                   # Agent가 생성한 할일 목록과 구현계획
-├── report/                      # Agent 작업을 마치고 생성을 요청한 결과물
-├── Dockerfile
-├── docker-compose.yml
-└── pyproject.toml
+│   │   ├── main.py                  # 앱 진입점: CORS·DB 초기화·스케줄러·라우터 등록
+│   │   ├── config.py                # 환경변수 설정 (pydantic-settings, .env 로드)
+│   │   ├── models/                  # SQLite 테이블 정의
+│   │   │   ├── article.py           # 기사 모델 (제목·URL·요약·카테고리·태그 등)
+│   │   │   ├── newsletter.py        # 뉴스레터(이메일) 모델
+│   │   │   ├── category.py          # 카테고리 모델
+│   │   │   └── chat.py              # 채팅 히스토리 모델
+│   │   ├── routers/                 # API 엔드포인트
+│   │   │   ├── articles.py          # GET /api/articles, GET /api/articles/{id}
+│   │   │   ├── newsletters.py       # GET /api/newsletters
+│   │   │   ├── categories.py        # GET /api/categories
+│   │   │   ├── search.py            # GET /api/search (벡터 유사도 검색)
+│   │   │   ├── chat.py              # POST /api/chat (RAG 채팅)
+│   │   │   └── sync.py              # POST /api/sync (수동 동기화 트리거)
+│   │   └── services/                # 비즈니스 로직
+│   │       ├── gmail.py             # Gmail API 연동: 이메일 수집·증분 동기화
+│   │       ├── parser.py            # 뉴스레터 HTML 파싱: 기사 추출
+│   │       ├── gemini.py            # Gemini AI: 배치 분류·요약·RAG 응답 생성
+│   │       ├── vector.py            # ChromaDB: 임베딩 생성(배치)·저장·유사도 검색
+│   │       └── db.py                # SQLite CRUD 헬퍼
+│   ├── static/                      # 프론트엔드 빌드 산출물 (서버 기동 시 자동 서빙)
+│   ├── credentials.json             # Google OAuth 클라이언트 파일 (직접 배치, Git 제외)
+│   ├── token.json                   # OAuth 액세스 토큰 (최초 인증 후 자동 생성, Git 제외)
+│   ├── .env                         # 환경변수 파일 (직접 생성, Git 제외)
+│   └── .env.example                 # 환경변수 예시 템플릿
+│
+├── frontend/                        # React 프론트엔드
+│   ├── src/
+│   │   ├── App.jsx                  # 루트 컴포넌트
+│   │   ├── main.jsx                 # React 진입점
+│   │   ├── api/                     # 백엔드 API 호출 모듈
+│   │   ├── components/              # UI 컴포넌트
+│   │   └── styles/                  # 전역 스타일
+│   ├── dist/                        # 빌드 산출물 (npm run build)
+│   ├── package.json
+│   └── vite.config.js
+│
+├── instructions/                    # AI Agent에게 전달한 PRD 문서
+│   ├── PRD_Master_OptionA.md        # 전체 시스템 설계 지침
+│   ├── PRD_Backend_ClaudeCode_OptionA.md   # 백엔드 구현 지침 (Claude Code용)
+│   └── PRD_Frontend_Antigravity_OptionA.md # 프론트엔드 구현 지침 (Antigravity용)
+│
+├── artifacts/                       # Agent가 생성한 작업 계획 및 구현 계획서
+├── report/                          # Agent 작업 완료 후 생성된 결과 보고서
+├── docs/                            # 프로젝트 개발 히스토리 문서
+├── scripts/
+│   └── build_and_deploy.sh          # 프론트엔드 빌드 → backend/static/ 복사 스크립트
+│
+├── main.py                          # uv run 진입점 (uvicorn 래퍼)
+├── pyproject.toml                   # Python 프로젝트 메타데이터 및 의존성
+├── uv.lock                          # uv 의존성 잠금 파일
+│
+│   # ── Docker 배포 (선택) ──────────────────────────────────────────────────
+├── Dockerfile                       # 멀티스테이지 빌드: 프론트엔드(Node) + 백엔드(Python)
+└── docker-compose.yml               # 컨테이너 실행 설정 (볼륨·환경변수·포트 매핑)
 ```
 
 ## API 주요 엔드포인트
