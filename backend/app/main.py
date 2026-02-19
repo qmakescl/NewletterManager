@@ -4,7 +4,6 @@ CORS 설정, DB 초기화, APScheduler 자동 동기화, 라우터 등록, 정�
 """
 
 import logging
-import os
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -16,7 +15,8 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.app.config import settings
 from backend.app.routers import articles, categories, chat, newsletters, search, senders, sync
-from backend.app.services.db import get_newsletters, init_db
+from backend.app.services.db import get_newsletters, get_unprocessed_articles, init_db
+from backend.app.sync_state import sync_lock
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,18 +32,28 @@ def _scheduled_sync() -> None:
     from backend.app.services.gemini import run_ai_processing
     from backend.app.services.gmail import sync_emails
 
+    if not sync_lock.acquire(blocking=False):
+        logger.info("동기화 이미 실행 중 — 스케줄 실행 건너뜀")
+        return
+
     logger.info("자동 동기화 시작 (스케줄)")
     try:
         sync_emails(days=2)
         run_ai_processing()
     except Exception:
         logger.exception("자동 동기화 실패")
+    finally:
+        sync_lock.release()
 
 
 def _initial_sync() -> None:
-    """최초 실행 시 최근 30일치 뉴스레터를 가져오는 초기 동기화."""
+    """최초 실행 시 최근 7일치 뉴스레터를 가져오는 초기 동기화."""
     from backend.app.services.gemini import run_ai_processing
     from backend.app.services.gmail import sync_emails
+
+    if not sync_lock.acquire(blocking=False):
+        logger.info("동기화 이미 실행 중 — 최초 동기화 건너뜀")
+        return
 
     logger.info("최초 동기화 시작 (최근 7일)")
     try:
@@ -52,17 +62,39 @@ def _initial_sync() -> None:
         logger.info("최초 동기화 완료")
     except Exception:
         logger.exception("최초 동기화 실패")
+    finally:
+        sync_lock.release()
+
+
+def _resume_ai_processing() -> None:
+    """서버 재시작 후 중단된 AI 처리를 재개한다."""
+    from backend.app.services.gemini import run_ai_processing
+
+    if not sync_lock.acquire(blocking=False):
+        logger.info("동기화 이미 실행 중 — AI 처리 재개 건너뜀")
+        return
+
+    logger.info("미처리 기사 AI 처리 재개")
+    try:
+        run_ai_processing()
+    except Exception:
+        logger.exception("AI 처리 재개 실패")
+    finally:
+        sync_lock.release()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     # 시작 시
     init_db()
 
-    # DB가 비어있으면 최초 동기화 백그라운드 실행
+    # DB가 비어있으면 최초 동기화, 미처리 기사가 있으면 AI 처리만 재개
     if not get_newsletters():
         logger.info("DB 비어있음 — 최초 동기화 스레드 시작")
         threading.Thread(target=_initial_sync, daemon=True).start()
+    elif get_unprocessed_articles(batch_size=1):
+        logger.info("미처리 기사 발견 — AI 처리 재개 스레드 시작")
+        threading.Thread(target=_resume_ai_processing, daemon=True).start()
 
     _scheduler.add_job(
         _scheduled_sync,
@@ -70,7 +102,7 @@ async def lifespan(app: FastAPI):
         hour=settings.sync_schedule_hour,
         id="daily_sync",
         replace_existing=True,
-        misfire_grace_time=None,  # 앱 재시작 시 누락된 작업을 즉시 실행
+        misfire_grace_time=3600,  # 1시간 이내 misfire만 허용 (재시작 시 즉시 실행 방지)
         coalesce=True,            # 다수 누락 시 한 번만 실행
     )
     _scheduler.start()
