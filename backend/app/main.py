@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.config import settings
-from backend.app.routers import articles, categories, chat, newsletters, search, sync
+from backend.app.routers import articles, categories, chat, newsletters, search, senders, sync
 from backend.app.services.db import get_newsletters, init_db
 
 logging.basicConfig(
@@ -108,6 +108,7 @@ app.include_router(newsletters.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(sync.router, prefix="/api")
+app.include_router(senders.router, prefix="/api")
 
 # 정적 파일 서빙 (프론트엔드 빌드 결과 — Phase 4에서 활성화)
 _static_dir = Path(__file__).resolve().parent.parent / "static"

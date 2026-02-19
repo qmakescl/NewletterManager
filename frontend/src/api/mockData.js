@@ -1,3 +1,7 @@
+export const mockSenders = [
+    { id: "1", name: "TLDR AI", email: "dan@tldrnewsletter.com", is_active: 1, created_at: "2026-01-01T00:00:00" },
+];
+
 export const mockNewsletters = [
     { date: "2026-02-18", article_count: 5, selectable: true },
     { date: "2026-02-17", article_count: 4, selectable: true },

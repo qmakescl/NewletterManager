@@ -17,7 +17,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from backend.app.config import settings
-from backend.app.services.db import insert_newsletter, newsletter_exists
+from backend.app.services.db import get_active_sender_emails, insert_newsletter, newsletter_exists
 from backend.app.services.parser import parse_tldr_email
 
 logger = logging.getLogger(__name__)
@@ -64,9 +64,14 @@ def get_gmail_service():
 
 def fetch_tldr_emails(days: int = 30) -> list[dict[str, Any]]:
     """최근 N일간의 TLDR AI 뉴스레터 이메일을 가져온다."""
+    active_emails = get_active_sender_emails()
+    if not active_emails:
+        logger.warning("활성 발신자가 없습니다. Gmail 검색을 건너뜁니다.")
+        return []
+
     service = get_gmail_service()
     after_date = (datetime.now() - timedelta(days=days)).strftime("%Y/%m/%d")
-    sender_parts = " OR ".join(f"from:{s}" for s in settings.newsletter_senders)
+    sender_parts = " OR ".join(f"from:{s}" for s in active_emails)
     query = f"({sender_parts}) after:{after_date}"
 
     logger.info("Gmail 검색: %s", query)

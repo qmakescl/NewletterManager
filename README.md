@@ -1,6 +1,6 @@
-# TLDR AI Newsletter Manager
+# My Newsletter Manager
 
-Gmail로 수신한 TLDR AI 뉴스레터를 자동으로 수집·분류·요약하고, RAG(Retrieval-Augmented Generation) 기반 채팅으로 탐색할 수 있는 개인용 뉴스레터 관리 시스템입니다.
+Gmail로 수신한 뉴스레터를 자동으로 수집·분류·요약하고, RAG(Retrieval-Augmented Generation) 기반 채팅으로 탐색할 수 있는 개인용 뉴스레터 관리 시스템입니다.
 
 ## 주요 기능
 

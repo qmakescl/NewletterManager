@@ -86,8 +86,35 @@ def init_db() -> None:
                 call_count INTEGER DEFAULT 0,
                 UNIQUE(call_date)
             );
+
+            CREATE TABLE IF NOT EXISTS senders (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
+
+    # 기존 .env 발신자를 시드 데이터로 마이그레이션
+    _seed_senders()
+
     logger.info("Database initialized: %s", DB_PATH)
+
+
+def _seed_senders() -> None:
+    """senders 테이블이 비어있으면 .env의 newsletter_senders를 초기 데이터로 삽입."""
+    with get_db() as conn:
+        count = conn.execute("SELECT COUNT(*) as cnt FROM senders").fetchone()["cnt"]
+        if count > 0:
+            return
+
+        for email in settings.newsletter_senders:
+            conn.execute(
+                "INSERT OR IGNORE INTO senders (id, name, email) VALUES (?, ?, ?)",
+                (str(uuid.uuid4()), email.split("@")[0], email),
+            )
+        logger.info("Seeded %d sender(s) from .env", len(settings.newsletter_senders))
 
 
 # ---------------------------------------------------------------------------
@@ -287,3 +314,85 @@ def increment_api_count(today: date | None = None) -> None:
                ON CONFLICT(call_date) DO UPDATE SET call_count = call_count + 1""",
             (today.isoformat(),),
         )
+
+
+# ---------------------------------------------------------------------------
+# Sender CRUD
+# ---------------------------------------------------------------------------
+
+def get_senders() -> list[dict[str, Any]]:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM senders ORDER BY created_at ASC"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_active_sender_emails() -> list[str]:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT email FROM senders WHERE is_active = 1"
+        ).fetchall()
+    return [row["email"] for row in rows]
+
+
+def add_sender(name: str, email: str) -> dict[str, Any]:
+    sender_id = str(uuid.uuid4())
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO senders (id, name, email) VALUES (?, ?, ?)",
+            (sender_id, name, email),
+        )
+        row = conn.execute(
+            "SELECT * FROM senders WHERE id = ?", (sender_id,)
+        ).fetchone()
+    return dict(row)
+
+
+def update_sender(
+    sender_id: str,
+    name: str | None = None,
+    email: str | None = None,
+    is_active: bool | None = None,
+) -> dict[str, Any] | None:
+    fields: list[str] = []
+    params: list[Any] = []
+
+    if name is not None:
+        fields.append("name = ?")
+        params.append(name)
+    if email is not None:
+        fields.append("email = ?")
+        params.append(email)
+    if is_active is not None:
+        fields.append("is_active = ?")
+        params.append(int(is_active))
+
+    if not fields:
+        return get_sender_by_id(sender_id)
+
+    params.append(sender_id)
+    with get_db() as conn:
+        conn.execute(
+            f"UPDATE senders SET {', '.join(fields)} WHERE id = ?", params
+        )
+        row = conn.execute(
+            "SELECT * FROM senders WHERE id = ?", (sender_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_sender(sender_id: str) -> bool:
+    with get_db() as conn:
+        cursor = conn.execute(
+            "DELETE FROM senders WHERE id = ?", (sender_id,)
+        )
+    return cursor.rowcount > 0
+
+
+def get_sender_by_id(sender_id: str) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM senders WHERE id = ?", (sender_id,)
+        ).fetchone()
+    return dict(row) if row else None

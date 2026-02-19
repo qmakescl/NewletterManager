@@ -1,4 +1,4 @@
-import { mockArticles, mockCategories, mockNewsletters } from './mockData';
+import { mockArticles, mockCategories, mockNewsletters, mockSenders } from './mockData';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
@@ -142,5 +142,75 @@ export const sendChatMessage = async (message) => {
         body: JSON.stringify({ message }),
     });
     if (!response.ok) throw new Error('Chat failed');
+    return response.json();
+};
+
+/**
+ * 발신자 목록 조회
+ */
+export const fetchSenders = async () => {
+    if (USE_MOCK) {
+        await sleep(300);
+        return mockSenders;
+    }
+
+    const response = await fetch(`${BASE_URL}/api/senders`);
+    if (!response.ok) throw new Error('Failed to fetch senders');
+    return response.json();
+};
+
+/**
+ * 발신자 추가
+ */
+export const addSender = async ({ name, email }) => {
+    if (USE_MOCK) {
+        await sleep(500);
+        return { id: Date.now().toString(), name, email, is_active: 1, created_at: new Date().toISOString() };
+    }
+
+    const response = await fetch(`${BASE_URL}/api/senders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email }),
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to add sender');
+    }
+    return response.json();
+};
+
+/**
+ * 발신자 수정
+ */
+export const updateSender = async (id, data) => {
+    if (USE_MOCK) {
+        await sleep(500);
+        return { id, ...data };
+    }
+
+    const response = await fetch(`${BASE_URL}/api/senders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to update sender');
+    }
+    return response.json();
+};
+
+/**
+ * 발신자 삭제
+ */
+export const deleteSender = async (id) => {
+    if (USE_MOCK) {
+        await sleep(500);
+        return { status: 'deleted' };
+    }
+
+    const response = await fetch(`${BASE_URL}/api/senders/${id}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('Failed to delete sender');
     return response.json();
 };

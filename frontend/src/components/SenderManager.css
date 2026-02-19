@@ -1,0 +1,217 @@
+.sender-manager {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.sender-manager-loading {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 24px;
+}
+
+/* 추가 폼 */
+.sender-add-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.sender-input {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    font-size: 0.875rem;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.sender-input:focus {
+    border-color: var(--color-primary);
+}
+
+.sender-input-email {
+    flex: 1.5;
+}
+
+.sender-input-sm {
+    padding: 6px 10px;
+    font-size: 0.813rem;
+}
+
+.sender-add-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    background-color: var(--color-primary);
+    color: #fff;
+    flex-shrink: 0;
+    transition: background-color 0.2s;
+}
+
+.sender-add-btn:hover:not(:disabled) {
+    background-color: var(--color-primary-dark);
+}
+
+.sender-add-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 목록 */
+.sender-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sender-empty {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 24px;
+    font-size: 0.875rem;
+}
+
+.sender-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background-color: var(--bg-main);
+    border: 1px solid var(--border-light);
+    transition: background-color 0.2s, opacity 0.2s;
+}
+
+.sender-row.inactive {
+    opacity: 0.5;
+}
+
+.sender-row:hover {
+    background-color: var(--bg-sidebar);
+}
+
+/* 발신자 정보 */
+.sender-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.sender-name {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--text-main);
+}
+
+.sender-email {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 편집 모드 */
+.sender-edit-fields {
+    display: flex;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+/* 액션 버튼 */
+.sender-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    margin-left: 12px;
+}
+
+.sender-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    color: var(--text-muted);
+    transition: all 0.2s;
+}
+
+.sender-action-btn:hover {
+    background-color: var(--border-light);
+}
+
+.sender-action-btn.save {
+    color: #10b981;
+}
+
+.sender-action-btn.cancel {
+    color: #ef4444;
+}
+
+.sender-action-btn.delete:hover {
+    color: #ef4444;
+    background-color: rgba(239, 68, 68, 0.1);
+}
+
+.sender-action-btn.edit:hover {
+    color: var(--color-primary);
+    background-color: rgba(59, 130, 246, 0.1);
+}
+
+/* 토글 스위치 */
+.sender-toggle {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.sender-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--border-light);
+    border-radius: 10px;
+    transition: background-color 0.3s;
+}
+
+.toggle-slider::before {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 2px;
+    bottom: 2px;
+    background-color: #fff;
+    border-radius: 50%;
+    transition: transform 0.3s;
+}
+
+.sender-toggle input:checked + .toggle-slider {
+    background-color: var(--color-primary);
+}
+
+.sender-toggle input:checked + .toggle-slider::before {
+    transform: translateX(16px);
+}
