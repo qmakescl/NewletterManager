@@ -70,6 +70,8 @@ async def lifespan(app: FastAPI):
         hour=settings.sync_schedule_hour,
         id="daily_sync",
         replace_existing=True,
+        misfire_grace_time=None,  # 앱 재시작 시 누락된 작업을 즉시 실행
+        coalesce=True,            # 다수 누락 시 한 번만 실행
     )
     _scheduler.start()
     logger.info(
