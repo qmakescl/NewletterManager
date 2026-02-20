@@ -33,3 +33,8 @@ chroma_db/
 compact_messages/
 # artifacts/
 # report/
+
+
+# Artifacts Backup
+artifacts_export/
+artifacts_backup.zip
