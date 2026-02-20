@@ -172,66 +172,113 @@ def process_articles_batch(articles: list[dict[str, Any]]) -> list[dict[str, Any
 def run_ai_processing() -> dict[str, int]:
     """미처리 기사 전체를 5개 배치로 AI 처리한다.
 
+    이미 AI 데이터(summary_ko)가 있는 기사는 Gemini 호출 없이
+    ai_processed=1로 마킹하고 벡터 DB에도 없을 때만 임베딩을 추가한다.
+
     Returns:
         처리 결과 요약 딕셔너리
     """
-    from backend.app.services.vector import add_articles_to_vector_db
+    from backend.app.services.vector import add_articles_to_vector_db, is_article_in_vector_db
 
     processed_count = 0
+    skipped_count = 0
     failed_count = 0
 
     logger.info("AI 처리 시작")
 
     while True:
-        if not _check_daily_limit():
-            logger.warning("일일 한도 초과로 AI 처리 중단")
-            break
-
         batch = get_unprocessed_articles(batch_size=5)
         if not batch:
             logger.info("미처리 기사 없음. AI 처리 완료")
             break
 
-        results = process_articles_batch(batch)
-        if not results:
-            failed_count += len(batch)
-            break
+        # 이미 AI 데이터가 있는 기사와 없는 기사를 분리
+        need_ai = []
+        already_processed = []
+        for article in batch:
+            if article.get("summary_ko"):
+                already_processed.append(article)
+            else:
+                need_ai.append(article)
 
-        vector_batch = []
-        for article, result in zip(batch, results):
-            try:
-                summary_ko = result.get("summary_ko", "")
-                category = result.get("category", "Other")
-                importance = int(result.get("importance", 0))
-                tags = result.get("tags", [])
+        # 이미 AI 데이터가 있는 기사: Gemini 호출 없이 마킹 + 벡터 DB 누락분만 추가
+        if already_processed:
+            logger.info(
+                "기존 AI 데이터 재사용 %d개 — Gemini 호출 스킵",
+                len(already_processed),
+            )
+            vector_batch = []
+            for article in already_processed:
+                try:
+                    update_article_ai_data(
+                        article_id=article["id"],
+                        summary_ko=article["summary_ko"],
+                        category=article.get("category", "Other"),
+                        importance=article.get("importance", 0),
+                        tags=article.get("tags", []),
+                    )
+                    if not is_article_in_vector_db(article["id"]):
+                        vector_batch.append({
+                            "article_id": article["id"],
+                            "title": article["title"],
+                            "summary_en": article.get("summary_en", ""),
+                            "summary_ko": article["summary_ko"],
+                            "category": article.get("category", "Other"),
+                            "tags": article.get("tags", []),
+                        })
+                    skipped_count += 1
+                except Exception:
+                    logger.exception("기사 마킹 실패: id=%s", article.get("id"))
+                    failed_count += 1
 
-                # DB 업데이트
-                update_article_ai_data(
-                    article_id=article["id"],
-                    summary_ko=summary_ko,
-                    category=category,
-                    importance=importance,
-                    tags=tags,
-                )
+            if vector_batch:
+                add_articles_to_vector_db(vector_batch)
 
-                vector_batch.append({
-                    "article_id": article["id"],
-                    "title": article["title"],
-                    "summary_en": article.get("summary_en", ""),
-                    "summary_ko": summary_ko,
-                    "category": category,
-                    "tags": tags,
-                })
-                processed_count += 1
-            except Exception:
-                logger.exception("기사 처리 실패: id=%s", article.get("id"))
-                failed_count += 1
+        # AI 처리가 필요한 기사: Gemini 호출
+        if need_ai:
+            if not _check_daily_limit():
+                logger.warning("일일 한도 초과로 AI 처리 중단")
+                break
 
-        # 배치 전체를 한 번의 임베딩 API 호출로 벡터 DB 저장
-        if vector_batch:
-            add_articles_to_vector_db(vector_batch)
+            results = process_articles_batch(need_ai)
+            if not results:
+                failed_count += len(need_ai)
+                break
 
-    result = {"processed": processed_count, "failed": failed_count}
+            vector_batch = []
+            for article, result in zip(need_ai, results):
+                try:
+                    summary_ko = result.get("summary_ko", "")
+                    category = result.get("category", "Other")
+                    importance = int(result.get("importance", 0))
+                    tags = result.get("tags", [])
+
+                    update_article_ai_data(
+                        article_id=article["id"],
+                        summary_ko=summary_ko,
+                        category=category,
+                        importance=importance,
+                        tags=tags,
+                    )
+
+                    vector_batch.append({
+                        "article_id": article["id"],
+                        "title": article["title"],
+                        "summary_en": article.get("summary_en", ""),
+                        "summary_ko": summary_ko,
+                        "category": category,
+                        "tags": tags,
+                    })
+                    processed_count += 1
+                except Exception:
+                    logger.exception("기사 처리 실패: id=%s", article.get("id"))
+                    failed_count += 1
+
+            # 배치 전체를 한 번의 임베딩 API 호출로 벡터 DB 저장
+            if vector_batch:
+                add_articles_to_vector_db(vector_batch)
+
+    result = {"processed": processed_count, "skipped": skipped_count, "failed": failed_count}
     logger.info("AI 처리 완료: %s", result)
     return result
 

@@ -46,6 +46,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS newsletters (
                 id TEXT PRIMARY KEY,
                 email_id TEXT UNIQUE NOT NULL,
+                gmail_id TEXT UNIQUE,
                 published_date DATE NOT NULL,
                 article_count INTEGER DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -96,10 +97,29 @@ def init_db() -> None:
             );
         """)
 
+    # 기존 newsletters 테이블에 gmail_id 컬럼이 없으면 추가 (마이그레이션)
+    _migrate_add_gmail_id()
+
     # 기존 .env 발신자를 시드 데이터로 마이그레이션
     _seed_senders()
 
     logger.info("Database initialized: %s", DB_PATH)
+
+
+def _migrate_add_gmail_id() -> None:
+    """기존 DB에 gmail_id 컬럼이 없으면 추가한다."""
+    with get_db() as conn:
+        columns = [
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(newsletters)").fetchall()
+        ]
+        if "gmail_id" not in columns:
+            conn.execute("ALTER TABLE newsletters ADD COLUMN gmail_id TEXT")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_newsletters_gmail_id "
+                "ON newsletters(gmail_id)"
+            )
+            logger.info("Migration: newsletters 테이블에 gmail_id 컬럼 추가 완료")
 
 
 def _seed_senders() -> None:
@@ -129,18 +149,28 @@ def newsletter_exists(email_id: str) -> bool:
         return row is not None
 
 
+def newsletter_exists_by_gmail_id(gmail_id: str) -> bool:
+    """Gmail 내부 ID로 뉴스레터 존재 여부를 확인한다 (조기 필터링용)."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM newsletters WHERE gmail_id = ?", (gmail_id,)
+        ).fetchone()
+        return row is not None
+
+
 def insert_newsletter(
     email_id: str,
     published_date: str,
     articles: list[dict[str, Any]],
+    gmail_id: str | None = None,
 ) -> str:
     newsletter_id = str(uuid.uuid4())
 
     with get_db() as conn:
         conn.execute(
-            """INSERT INTO newsletters (id, email_id, published_date, article_count)
-               VALUES (?, ?, ?, ?)""",
-            (newsletter_id, email_id, published_date, len(articles)),
+            """INSERT INTO newsletters (id, email_id, gmail_id, published_date, article_count)
+               VALUES (?, ?, ?, ?, ?)""",
+            (newsletter_id, email_id, gmail_id, published_date, len(articles)),
         )
 
         for art in articles:

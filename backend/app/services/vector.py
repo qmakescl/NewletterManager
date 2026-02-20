@@ -115,6 +115,15 @@ def search_similar(query: str, top_k: int = 10) -> list[dict[str, Any]]:
         return []
 
 
+def is_article_in_vector_db(article_id: str) -> bool:
+    """해당 기사가 이미 ChromaDB에 존재하는지 확인한다."""
+    try:
+        result = _get_collection().get(ids=[article_id], include=[])
+        return len(result["ids"]) > 0
+    except Exception:
+        return False
+
+
 def get_collection_count() -> int:
     """ChromaDB에 저장된 문서 수를 반환한다."""
     try:

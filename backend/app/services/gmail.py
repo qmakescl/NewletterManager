@@ -17,7 +17,12 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from backend.app.config import settings
-from backend.app.services.db import get_active_sender_emails, insert_newsletter, newsletter_exists
+from backend.app.services.db import (
+    get_active_sender_emails,
+    insert_newsletter,
+    newsletter_exists,
+    newsletter_exists_by_gmail_id,
+)
 from backend.app.services.parser import parse_tldr_email
 
 logger = logging.getLogger(__name__)
@@ -62,12 +67,16 @@ def get_gmail_service():
     return build("gmail", "v1", credentials=creds)
 
 
-def fetch_tldr_emails(days: int = 30) -> list[dict[str, Any]]:
-    """최근 N일간의 TLDR AI 뉴스레터 이메일을 가져온다."""
+def _list_gmail_message_refs(days: int = 30) -> tuple[Any, list[dict]]:
+    """Gmail에서 메시지 참조(id, threadId)만 가져온다. full content 다운로드 없음.
+
+    Returns:
+        (service, message_refs) — service는 이후 _fetch_full_message에 재사용
+    """
     active_emails = get_active_sender_emails()
     if not active_emails:
         logger.warning("활성 발신자가 없습니다. Gmail 검색을 건너뜁니다.")
-        return []
+        return None, []
 
     service = get_gmail_service()
     after_date = (datetime.now() - timedelta(days=days)).strftime("%Y/%m/%d")
@@ -76,7 +85,7 @@ def fetch_tldr_emails(days: int = 30) -> list[dict[str, Any]]:
 
     logger.info("Gmail 검색: %s", query)
 
-    messages: list[dict] = []
+    message_refs: list[dict] = []
     page_token = None
 
     while True:
@@ -88,25 +97,24 @@ def fetch_tldr_emails(days: int = 30) -> list[dict[str, Any]]:
         )
 
         if "messages" in result:
-            messages.extend(result["messages"])
+            message_refs.extend(result["messages"])
 
         page_token = result.get("nextPageToken")
         if not page_token:
             break
 
-    logger.info("총 %d개 메시지 발견", len(messages))
+    logger.info("총 %d개 메시지 참조 발견", len(message_refs))
+    return service, message_refs
 
-    full_messages = []
-    for msg_ref in messages:
-        msg = (
-            service.users()
-            .messages()
-            .get(userId="me", id=msg_ref["id"], format="full")
-            .execute()
-        )
-        full_messages.append(msg)
 
-    return full_messages
+def _fetch_full_message(service: Any, gmail_id: str) -> dict[str, Any]:
+    """단일 메시지의 full content를 가져온다."""
+    return (
+        service.users()
+        .messages()
+        .get(userId="me", id=gmail_id, format="full")
+        .execute()
+    )
 
 
 def get_message_id(message: dict[str, Any]) -> str:
@@ -186,26 +194,38 @@ def _extract_parts(
 # ---------------------------------------------------------------------------
 
 def sync_emails(days: int = 30) -> dict[str, int]:
-    """Gmail 동기화 파이프라인: 수집 → 중복 체크 → 파싱 → DB 저장.
+    """Gmail 동기화 파이프라인: 목록 조회 → 조기 중복 체크 → full 다운로드 → 파싱 → DB 저장.
 
     Returns:
         처리 결과 요약 딕셔너리
     """
     logger.info("Gmail 동기화 시작 (최근 %d일)", days)
 
-    messages = fetch_tldr_emails(days=days)
+    service, message_refs = _list_gmail_message_refs(days=days)
+    if not message_refs:
+        return {"total_fetched": 0, "new_newsletters": 0, "skipped_duplicates": 0, "errors": 0}
+
     new_count = 0
     skipped_count = 0
     error_count = 0
 
-    for msg in messages:
-        email_id = get_message_id(msg)
+    for msg_ref in message_refs:
+        gmail_id = msg_ref["id"]
 
-        if newsletter_exists(email_id):
+        # 조기 중복 체크: full content 다운로드 전에 Gmail ID로 확인
+        if newsletter_exists_by_gmail_id(gmail_id):
             skipped_count += 1
             continue
 
         try:
+            msg = _fetch_full_message(service, gmail_id)
+            email_id = get_message_id(msg)
+
+            # 레거시 데이터 대비: email_id(Message-ID 헤더)로도 체크
+            if newsletter_exists(email_id):
+                skipped_count += 1
+                continue
+
             published_date = get_message_date(msg)
             html_body, text_body = get_message_body(msg)
             parsed_articles = parse_tldr_email(html_body, text_body)
@@ -222,20 +242,21 @@ def sync_emails(days: int = 30) -> dict[str, int]:
                         }
                         for a in parsed_articles
                     ],
+                    gmail_id=gmail_id,
                 )
                 new_count += 1
                 logger.info(
                     "뉴스레터 저장: %s (%d개 기사)", published_date, len(parsed_articles)
                 )
             else:
-                logger.warning("파싱 결과 없음: email_id=%s", email_id)
+                logger.warning("파싱 결과 없음: gmail_id=%s", gmail_id)
                 error_count += 1
         except Exception:
-            logger.exception("뉴스레터 처리 실패: email_id=%s", email_id)
+            logger.exception("뉴스레터 처리 실패: gmail_id=%s", gmail_id)
             error_count += 1
 
     result = {
-        "total_fetched": len(messages),
+        "total_fetched": len(message_refs),
         "new_newsletters": new_count,
         "skipped_duplicates": skipped_count,
         "errors": error_count,
