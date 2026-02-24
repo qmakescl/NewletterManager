@@ -99,7 +99,6 @@ def _parse_json_response(text: str) -> list[dict[str, Any]]:
     """Gemini 응답에서 JSON을 추출하여 파싱한다."""
     text = text.strip()
 
-    # 마크다운 코드블록 제거
     if text.startswith("```"):
         lines = text.split("\n")
         text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
@@ -107,7 +106,6 @@ def _parse_json_response(text: str) -> list[dict[str, Any]]:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # JSON 배열 부분만 추출 시도
         import re
         match = re.search(r"\[.*\]", text, re.DOTALL)
         if match:
@@ -119,28 +117,28 @@ def _parse_json_response(text: str) -> list[dict[str, Any]]:
 # 배치 AI 처리
 # ---------------------------------------------------------------------------
 
-def _check_daily_limit() -> bool:
-    """일일 API 호출 한도를 확인한다. 초과 시 False를 반환한다."""
+def _check_daily_limit(user_id: str) -> bool:
+    """사용자별 일일 API 호출 한도를 확인한다."""
     today = date.today()
-    count = get_daily_api_count(today)
+    count = get_daily_api_count(user_id, today)
     if count >= settings.daily_api_call_limit:
         logger.warning(
-            "일일 API 호출 한도 도달: %d/%d", count, settings.daily_api_call_limit
+            "일일 API 호출 한도 도달: %d/%d (user=%s)", count, settings.daily_api_call_limit, user_id
         )
         return False
     if count >= settings.daily_api_call_limit * 0.9:
         logger.warning(
-            "일일 API 호출 한도 90%% 도달: %d/%d", count, settings.daily_api_call_limit
+            "일일 API 호출 한도 90%% 도달: %d/%d (user=%s)", count, settings.daily_api_call_limit, user_id
         )
     return True
 
 
-def process_articles_batch(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def process_articles_batch(user_id: str, articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """기사 배치(최대 5개)를 Gemini로 처리하여 분류/요약 결과를 반환한다."""
     if not articles:
         return []
 
-    if not _check_daily_limit():
+    if not _check_daily_limit(user_id):
         return []
 
     articles_text = ""
@@ -159,40 +157,32 @@ def process_articles_batch(articles: list[dict[str, Any]]) -> list[dict[str, Any
 
     try:
         response_text = _call_with_retry(prompt)
-        increment_api_count()
-        logger.debug("API 호출 완료. 오늘 총 %d회", get_daily_api_count())
+        increment_api_count(user_id)
+        logger.debug("API 호출 완료. 오늘 총 %d회 (user=%s)", get_daily_api_count(user_id), user_id)
 
         results = _parse_json_response(response_text)
         return results
     except Exception:
-        logger.exception("배치 처리 실패 (기사 수: %d)", len(articles))
+        logger.exception("배치 처리 실패 (기사 수: %d, user=%s)", len(articles), user_id)
         return []
 
 
-def run_ai_processing() -> dict[str, int]:
-    """미처리 기사 전체를 5개 배치로 AI 처리한다.
-
-    이미 AI 데이터(summary_ko)가 있는 기사는 Gemini 호출 없이
-    ai_processed=1로 마킹하고 벡터 DB에도 없을 때만 임베딩을 추가한다.
-
-    Returns:
-        처리 결과 요약 딕셔너리
-    """
+def run_ai_processing(user_id: str) -> dict[str, int]:
+    """미처리 기사 전체를 5개 배치로 AI 처리한다."""
     from backend.app.services.vector import add_articles_to_vector_db, is_article_in_vector_db
 
     processed_count = 0
     skipped_count = 0
     failed_count = 0
 
-    logger.info("AI 처리 시작")
+    logger.info("AI 처리 시작 (user=%s)", user_id)
 
     while True:
-        batch = get_unprocessed_articles(batch_size=5)
+        batch = get_unprocessed_articles(user_id, batch_size=5)
         if not batch:
-            logger.info("미처리 기사 없음. AI 처리 완료")
+            logger.info("미처리 기사 없음. AI 처리 완료 (user=%s)", user_id)
             break
 
-        # 이미 AI 데이터가 있는 기사와 없는 기사를 분리
         need_ai = []
         already_processed = []
         for article in batch:
@@ -201,11 +191,10 @@ def run_ai_processing() -> dict[str, int]:
             else:
                 need_ai.append(article)
 
-        # 이미 AI 데이터가 있는 기사: Gemini 호출 없이 마킹 + 벡터 DB 누락분만 추가
         if already_processed:
             logger.info(
-                "기존 AI 데이터 재사용 %d개 — Gemini 호출 스킵",
-                len(already_processed),
+                "기존 AI 데이터 재사용 %d개 — Gemini 호출 스킵 (user=%s)",
+                len(already_processed), user_id,
             )
             vector_batch = []
             for article in already_processed:
@@ -217,7 +206,7 @@ def run_ai_processing() -> dict[str, int]:
                         importance=article.get("importance", 0),
                         tags=article.get("tags", []),
                     )
-                    if not is_article_in_vector_db(article["id"]):
+                    if not is_article_in_vector_db(user_id, article["id"]):
                         vector_batch.append({
                             "article_id": article["id"],
                             "title": article["title"],
@@ -232,15 +221,14 @@ def run_ai_processing() -> dict[str, int]:
                     failed_count += 1
 
             if vector_batch:
-                add_articles_to_vector_db(vector_batch)
+                add_articles_to_vector_db(user_id, vector_batch)
 
-        # AI 처리가 필요한 기사: Gemini 호출
         if need_ai:
-            if not _check_daily_limit():
-                logger.warning("일일 한도 초과로 AI 처리 중단")
+            if not _check_daily_limit(user_id):
+                logger.warning("일일 한도 초과로 AI 처리 중단 (user=%s)", user_id)
                 break
 
-            results = process_articles_batch(need_ai)
+            results = process_articles_batch(user_id, need_ai)
             if not results:
                 failed_count += len(need_ai)
                 break
@@ -274,12 +262,11 @@ def run_ai_processing() -> dict[str, int]:
                     logger.exception("기사 처리 실패: id=%s", article.get("id"))
                     failed_count += 1
 
-            # 배치 전체를 한 번의 임베딩 API 호출로 벡터 DB 저장
             if vector_batch:
-                add_articles_to_vector_db(vector_batch)
+                add_articles_to_vector_db(user_id, vector_batch)
 
     result = {"processed": processed_count, "skipped": skipped_count, "failed": failed_count}
-    logger.info("AI 처리 완료: %s", result)
+    logger.info("AI 처리 완료: %s (user=%s)", result, user_id)
     return result
 
 
@@ -287,20 +274,18 @@ def run_ai_processing() -> dict[str, int]:
 # RAG 파이프라인
 # ---------------------------------------------------------------------------
 
-def rag_query(user_message: str) -> dict[str, Any]:
+def rag_query(user_id: str, user_message: str) -> dict[str, Any]:
     """RAG 파이프라인: 질의 → 벡터 검색 → context 구성 → Gemini 답변 생성."""
     from backend.app.services.db import get_article_by_id
     from backend.app.services.vector import search_similar
 
-    # 1단계: 유사 기사 검색
-    similar = search_similar(query=user_message, top_k=10)
+    similar = search_similar(user_id, query=user_message, top_k=10)
 
-    # 2단계: context 구성
     context_parts: list[str] = []
     source_ids: list[str] = []
 
     for item in similar:
-        article = get_article_by_id(item["id"])
+        article = get_article_by_id(user_id, item["id"])
         if not article:
             continue
         source_ids.append(article["id"])
@@ -313,22 +298,20 @@ def rag_query(user_message: str) -> dict[str, Any]:
 
     context = "\n\n".join(context_parts) if context_parts else "관련 기사를 찾을 수 없습니다."
 
-    if not _check_daily_limit():
+    if not _check_daily_limit(user_id):
         return {
             "answer": "일일 API 호출 한도에 도달했습니다. 내일 다시 시도해주세요.",
             "sources": [],
         }
 
-    # 3단계: Gemini 답변 생성
     prompt = _RAG_PROMPT.format(context=context, query=user_message)
     try:
         response_text = _call_with_retry(prompt)
-        increment_api_count()
+        increment_api_count(user_id)
     except Exception:
-        logger.exception("RAG 쿼리 실패")
+        logger.exception("RAG 쿼리 실패 (user=%s)", user_id)
         return {"answer": "답변 생성 중 오류가 발생했습니다.", "sources": []}
 
-    # 4단계: 응답 파싱
     try:
         result = json.loads(response_text.strip())
         return {

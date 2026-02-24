@@ -1,27 +1,28 @@
 """Gmail API 연동 서비스.
 
-Google OAuth 2.0 인증, TLDR AI 뉴스레터 수집, 동기화 파이프라인을 제공한다.
+per-user OAuth 토큰 기반 Gmail 연동, 뉴스레터 수집, 동기화 파이프라인을 제공한다.
 """
 
+import json
 import base64
 import logging
-import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 from typing import Any
 
+from cryptography.fernet import Fernet
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from backend.app.config import settings
 from backend.app.services.db import (
     get_active_sender_emails,
+    get_user_by_id,
     insert_newsletter,
     newsletter_exists,
     newsletter_exists_by_gmail_id,
+    update_user_gmail_token,
 )
 from backend.app.services.parser import parse_tldr_email
 
@@ -29,56 +30,55 @@ logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
-TOKEN_PATH = str(_BACKEND_DIR / "token.json")
+
+def _get_fernet() -> Fernet:
+    return Fernet(settings.token_encryption_key.encode())
 
 
-def get_gmail_service():
-    """Gmail API 서비스 인스턴스를 반환한다.
+def get_gmail_service_for_user(user_id: str):
+    """DB에 저장된 암호화 토큰으로 Gmail API 서비스를 반환한다.
 
-    최초 실행 시 브라우저 기반 OAuth 인증을 수행하고, 이후에는 token.json을 사용한다.
+    토큰 만료 시 자동으로 갱신하고 DB에 재저장한다.
     """
-    creds = None
-    if os.path.exists(TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+    user = get_user_by_id(user_id)
+    if not user or not user.get("gmail_token_encrypted"):
+        raise ValueError(f"사용자 {user_id}의 Gmail 토큰이 없습니다.")
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            credentials_path = str(settings.gmail_credentials_path)
-            if not os.path.isabs(credentials_path):
-                credentials_path = str(_BACKEND_DIR / credentials_path)
+    fernet = _get_fernet()
+    decrypted = fernet.decrypt(user["gmail_token_encrypted"].encode()).decode()
+    token_data = json.loads(decrypted)
 
-            if not os.path.exists(credentials_path):
-                raise FileNotFoundError(
-                    f"OAuth credentials 파일을 찾을 수 없습니다: {credentials_path}\n"
-                    "Google Cloud Console에서 OAuth 2.0 클라이언트 자격증명을 발급받고 "
-                    "credentials.json으로 저장해주세요."
-                )
+    creds = Credentials(
+        token=token_data["access_token"],
+        refresh_token=token_data.get("refresh_token"),
+        token_uri=token_data.get("token_uri", "https://oauth2.googleapis.com/token"),
+        client_id=token_data.get("client_id", settings.google_client_id),
+        client_secret=token_data.get("client_secret", settings.google_client_secret),
+        scopes=token_data.get("scopes", SCOPES),
+    )
 
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-
-        with open(TOKEN_PATH, "w") as f:
-            f.write(creds.to_json())
-        logger.info("OAuth 토큰 저장 완료: %s", TOKEN_PATH)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        new_token_data = {
+            **token_data,
+            "access_token": creds.token,
+        }
+        encrypted = fernet.encrypt(json.dumps(new_token_data).encode()).decode()
+        expiry = creds.expiry.isoformat() if creds.expiry else None
+        update_user_gmail_token(user_id, encrypted, expiry)
+        logger.info("Gmail 토큰 갱신 완료: user_id=%s", user_id)
 
     return build("gmail", "v1", credentials=creds)
 
 
-def _list_gmail_message_refs(days: int = 30) -> tuple[Any, list[dict]]:
-    """Gmail에서 메시지 참조(id, threadId)만 가져온다. full content 다운로드 없음.
-
-    Returns:
-        (service, message_refs) — service는 이후 _fetch_full_message에 재사용
-    """
-    active_emails = get_active_sender_emails()
+def _list_gmail_message_refs(user_id: str, days: int = 30) -> tuple[Any, list[dict]]:
+    """Gmail에서 메시지 참조(id, threadId)만 가져온다."""
+    active_emails = get_active_sender_emails(user_id)
     if not active_emails:
         logger.warning("활성 발신자가 없습니다. Gmail 검색을 건너뜁니다.")
         return None, []
 
-    service = get_gmail_service()
+    service = get_gmail_service_for_user(user_id)
     after_date = (datetime.now() - timedelta(days=days)).strftime("%Y/%m/%d")
     sender_parts = " OR ".join(f"from:{s}" for s in active_emails)
     query = f"({sender_parts}) after:{after_date}"
@@ -104,6 +104,41 @@ def _list_gmail_message_refs(days: int = 30) -> tuple[Any, list[dict]]:
             break
 
     logger.info("총 %d개 메시지 참조 발견", len(message_refs))
+    return service, message_refs
+
+
+def _list_gmail_message_refs_for_date(
+    user_id: str, target_date: date
+) -> tuple[Any, list[dict]]:
+    """특정 날짜의 Gmail 메시지 참조를 가져온다."""
+    active_emails = get_active_sender_emails(user_id)
+    if not active_emails:
+        return None, []
+
+    service = get_gmail_service_for_user(user_id)
+    after_date = target_date.strftime("%Y/%m/%d")
+    before_date = (target_date + timedelta(days=1)).strftime("%Y/%m/%d")
+    sender_parts = " OR ".join(f"from:{s}" for s in active_emails)
+    query = f"({sender_parts}) after:{after_date} before:{before_date}"
+
+    logger.info("Gmail 날짜 검색: %s", query)
+
+    message_refs: list[dict] = []
+    page_token = None
+
+    while True:
+        result = (
+            service.users()
+            .messages()
+            .list(userId="me", q=query, pageToken=page_token)
+            .execute()
+        )
+        if "messages" in result:
+            message_refs.extend(result["messages"])
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+
     return service, message_refs
 
 
@@ -137,7 +172,6 @@ def get_message_date(message: dict[str, Any]) -> str:
             except Exception:
                 pass
 
-    # fallback: Gmail 내부 타임스탬프 사용
     internal_date = message.get("internalDate")
     if internal_date:
         dt = datetime.fromtimestamp(int(internal_date) / 1000)
@@ -147,21 +181,12 @@ def get_message_date(message: dict[str, Any]) -> str:
 
 
 def get_message_body(message: dict[str, Any]) -> tuple[str, str]:
-    """Gmail 메시지에서 HTML과 plain text 본문을 추출한다.
-
-    Returns:
-        (html_body, plain_text_body) 튜플
-    """
-    html_body = ""
-    text_body = ""
-
+    """Gmail 메시지에서 HTML과 plain text 본문을 추출한다."""
     payload = message.get("payload", {})
     _extract_parts(payload, html_body_parts := [], text_body_parts := [])
 
-    if html_body_parts:
-        html_body = "\n".join(html_body_parts)
-    if text_body_parts:
-        text_body = "\n".join(text_body_parts)
+    html_body = "\n".join(html_body_parts) if html_body_parts else ""
+    text_body = "\n".join(text_body_parts) if text_body_parts else ""
 
     return html_body, text_body
 
@@ -193,18 +218,10 @@ def _extract_parts(
 # 동기화 파이프라인
 # ---------------------------------------------------------------------------
 
-def sync_emails(days: int = 30) -> dict[str, int]:
-    """Gmail 동기화 파이프라인: 목록 조회 → 조기 중복 체크 → full 다운로드 → 파싱 → DB 저장.
-
-    Returns:
-        처리 결과 요약 딕셔너리
-    """
-    logger.info("Gmail 동기화 시작 (최근 %d일)", days)
-
-    service, message_refs = _list_gmail_message_refs(days=days)
-    if not message_refs:
-        return {"total_fetched": 0, "new_newsletters": 0, "skipped_duplicates": 0, "errors": 0}
-
+def _process_messages(
+    user_id: str, service: Any, message_refs: list[dict]
+) -> dict[str, int]:
+    """메시지 참조 목록을 처리하여 뉴스레터를 DB에 저장한다."""
     new_count = 0
     skipped_count = 0
     error_count = 0
@@ -212,8 +229,7 @@ def sync_emails(days: int = 30) -> dict[str, int]:
     for msg_ref in message_refs:
         gmail_id = msg_ref["id"]
 
-        # 조기 중복 체크: full content 다운로드 전에 Gmail ID로 확인
-        if newsletter_exists_by_gmail_id(gmail_id):
+        if newsletter_exists_by_gmail_id(user_id, gmail_id):
             skipped_count += 1
             continue
 
@@ -221,8 +237,7 @@ def sync_emails(days: int = 30) -> dict[str, int]:
             msg = _fetch_full_message(service, gmail_id)
             email_id = get_message_id(msg)
 
-            # 레거시 데이터 대비: email_id(Message-ID 헤더)로도 체크
-            if newsletter_exists(email_id):
+            if newsletter_exists(user_id, email_id):
                 skipped_count += 1
                 continue
 
@@ -232,6 +247,7 @@ def sync_emails(days: int = 30) -> dict[str, int]:
 
             if parsed_articles:
                 insert_newsletter(
+                    user_id=user_id,
                     email_id=email_id,
                     published_date=published_date,
                     articles=[
@@ -255,11 +271,38 @@ def sync_emails(days: int = 30) -> dict[str, int]:
             logger.exception("뉴스레터 처리 실패: gmail_id=%s", gmail_id)
             error_count += 1
 
-    result = {
-        "total_fetched": len(message_refs),
+    return {
         "new_newsletters": new_count,
         "skipped_duplicates": skipped_count,
         "errors": error_count,
     }
+
+
+def sync_emails(user_id: str, days: int = 30) -> dict[str, int]:
+    """Gmail 동기화 파이프라인: 목록 조회 → 조기 중복 체크 → full 다운로드 → 파싱 → DB 저장."""
+    logger.info("Gmail 동기화 시작 (user=%s, 최근 %d일)", user_id, days)
+
+    service, message_refs = _list_gmail_message_refs(user_id, days=days)
+    if not message_refs:
+        return {"total_fetched": 0, "new_newsletters": 0, "skipped_duplicates": 0, "errors": 0}
+
+    result = _process_messages(user_id, service, message_refs)
+    result["total_fetched"] = len(message_refs)
+
     logger.info("Gmail 동기화 완료: %s", result)
+    return result
+
+
+def sync_emails_for_date(user_id: str, target_date: date) -> dict[str, int]:
+    """특정 날짜의 뉴스레터를 동기화한다 (캘린더 클릭용)."""
+    logger.info("Gmail 날짜 동기화 시작 (user=%s, date=%s)", user_id, target_date)
+
+    service, message_refs = _list_gmail_message_refs_for_date(user_id, target_date)
+    if not message_refs:
+        return {"total_fetched": 0, "new_newsletters": 0, "skipped_duplicates": 0, "errors": 0}
+
+    result = _process_messages(user_id, service, message_refs)
+    result["total_fetched"] = len(message_refs)
+
+    logger.info("Gmail 날짜 동기화 완료: %s", result)
     return result

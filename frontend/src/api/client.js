@@ -6,29 +6,48 @@ const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * 공통 fetch 래퍼: credentials + 401 리다이렉트
+ */
+const apiFetch = async (url, options = {}) => {
+    const response = await fetch(url, {
+        ...options,
+        credentials: 'include',
+    });
+
+    if (response.status === 401) {
+        window.location.href = '/login';
+        throw new Error('Unauthorized');
+    }
+
+    return response;
+};
+
+/**
+ * 현재 로그인 사용자 정보 조회
+ */
+export const fetchCurrentUser = async () => {
+    const response = await apiFetch(`${BASE_URL}/api/auth/me`);
+    if (!response.ok) throw new Error('Not authenticated');
+    return response.json();
+};
+
+/**
  * 기사 목록 조회
- * @param {Object} params { dates, category, page, size }
  */
 export const fetchArticles = async ({ dates, category, page = 1, size = 12 } = {}) => {
     if (USE_MOCK) {
-        await sleep(500); // 로딩 시뮬레이션
+        await sleep(500);
         let filtered = [...mockArticles];
-
         if (dates) {
             const dateArray = Array.isArray(dates) ? dates : dates.split(',');
             filtered = filtered.filter(a => dateArray.some(d => a.published_at.startsWith(d)));
         }
-
         if (category && category !== '전체') {
             filtered = filtered.filter(a => a.category === category);
         }
-
-        // 정렬 (최신순)
         filtered.sort((a, b) => new Date(b.published_at) - new Date(a.published_at));
-
         const start = (page - 1) * size;
         const items = filtered.slice(start, start + size);
-
         return {
             total: filtered.length,
             items,
@@ -42,7 +61,7 @@ export const fetchArticles = async ({ dates, category, page = 1, size = 12 } = {
     queryParams.append('page', page);
     queryParams.append('size', size);
 
-    const response = await fetch(`${BASE_URL}/api/articles?${queryParams.toString()}`);
+    const response = await apiFetch(`${BASE_URL}/api/articles?${queryParams.toString()}`);
     if (!response.ok) throw new Error('Failed to fetch articles');
     return response.json();
 };
@@ -58,7 +77,7 @@ export const fetchArticleDetail = async (id) => {
         return article;
     }
 
-    const response = await fetch(`${BASE_URL}/api/articles/${id}`);
+    const response = await apiFetch(`${BASE_URL}/api/articles/${id}`);
     if (!response.ok) throw new Error('Failed to fetch article detail');
     return response.json();
 };
@@ -77,7 +96,7 @@ export const searchArticles = async (q) => {
         return { total: filtered.length, items: filtered };
     }
 
-    const response = await fetch(`${BASE_URL}/api/search?q=${encodeURIComponent(q)}`);
+    const response = await apiFetch(`${BASE_URL}/api/search?q=${encodeURIComponent(q)}`);
     if (!response.ok) throw new Error('Search failed');
     return response.json();
 };
@@ -91,7 +110,7 @@ export const fetchCategories = async () => {
         return mockCategories;
     }
 
-    const response = await fetch(`${BASE_URL}/api/categories`);
+    const response = await apiFetch(`${BASE_URL}/api/categories`);
     if (!response.ok) throw new Error('Failed to fetch categories');
     return response.json();
 };
@@ -105,8 +124,22 @@ export const fetchNewsletters = async () => {
         return { newsletters: mockNewsletters };
     }
 
-    const response = await fetch(`${BASE_URL}/api/newsletters`);
+    const response = await apiFetch(`${BASE_URL}/api/newsletters`);
     if (!response.ok) throw new Error('Failed to fetch newsletters');
+    return response.json();
+};
+
+/**
+ * 동기화 상태 조회
+ */
+export const fetchSyncStatus = async () => {
+    if (USE_MOCK) {
+        await sleep(200);
+        return { is_syncing: false, phase: 'idle', message: '' };
+    }
+
+    const response = await apiFetch(`${BASE_URL}/api/sync/status`);
+    if (!response.ok) throw new Error('Failed to fetch sync status');
     return response.json();
 };
 
@@ -119,8 +152,26 @@ export const triggerSync = async () => {
         return { status: 'success', message: 'Sync completed' };
     }
 
-    const response = await fetch(`${BASE_URL}/api/sync`, { method: 'POST' });
+    const response = await apiFetch(`${BASE_URL}/api/sync`, { method: 'POST' });
     if (!response.ok) throw new Error('Sync failed');
+    return response.json();
+};
+
+/**
+ * 특정 날짜 동기화 트리거 (캘린더 클릭용)
+ */
+export const triggerDateSync = async (date) => {
+    if (USE_MOCK) {
+        await sleep(1500);
+        return { status: 'success' };
+    }
+
+    const response = await apiFetch(`${BASE_URL}/api/sync/date`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date }),
+    });
+    if (!response.ok) throw new Error('Date sync failed');
     return response.json();
 };
 
@@ -136,7 +187,7 @@ export const sendChatMessage = async (message) => {
         };
     }
 
-    const response = await fetch(`${BASE_URL}/api/chat`, {
+    const response = await apiFetch(`${BASE_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message }),
@@ -154,7 +205,7 @@ export const fetchSenders = async () => {
         return mockSenders;
     }
 
-    const response = await fetch(`${BASE_URL}/api/senders`);
+    const response = await apiFetch(`${BASE_URL}/api/senders`);
     if (!response.ok) throw new Error('Failed to fetch senders');
     return response.json();
 };
@@ -168,7 +219,7 @@ export const addSender = async ({ name, email }) => {
         return { id: Date.now().toString(), name, email, is_active: 1, created_at: new Date().toISOString() };
     }
 
-    const response = await fetch(`${BASE_URL}/api/senders`, {
+    const response = await apiFetch(`${BASE_URL}/api/senders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email }),
@@ -189,7 +240,7 @@ export const updateSender = async (id, data) => {
         return { id, ...data };
     }
 
-    const response = await fetch(`${BASE_URL}/api/senders/${id}`, {
+    const response = await apiFetch(`${BASE_URL}/api/senders/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -210,7 +261,7 @@ export const deleteSender = async (id) => {
         return { status: 'deleted' };
     }
 
-    const response = await fetch(`${BASE_URL}/api/senders/${id}`, { method: 'DELETE' });
+    const response = await apiFetch(`${BASE_URL}/api/senders/${id}`, { method: 'DELETE' });
     if (!response.ok) throw new Error('Failed to delete sender');
     return response.json();
 };

@@ -1,0 +1,158 @@
+.initial-sync-screen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--bg-main);
+    z-index: 9999;
+    animation: fadeIn 0.5s ease-out;
+}
+
+.sync-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+    padding: 48px;
+    max-width: 420px;
+    width: 100%;
+}
+
+/* Logo */
+.sync-logo-text {
+    font-size: 1.5rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Animated ring */
+.sync-animation {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sync-ring {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+.sync-ring.active::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    border-top-color: var(--color-primary);
+    border-right-color: var(--color-secondary);
+    animation: spin 1.2s linear infinite;
+}
+
+.sync-ring.active::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+    opacity: 0.08;
+}
+
+.sync-ring.complete::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #10b981, #34d399);
+    opacity: 0.1;
+}
+
+.phase-icon {
+    font-size: 40px;
+    color: var(--color-primary);
+    z-index: 1;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.phase-icon.done {
+    color: #10b981;
+    animation: none;
+}
+
+.phase-icon.error {
+    color: #ef4444;
+    animation: none;
+}
+
+/* Message */
+.sync-message {
+    font-size: 1rem;
+    color: var(--text-muted);
+    text-align: center;
+    line-height: 1.6;
+    min-height: 1.6em;
+}
+
+/* Steps indicator */
+.sync-steps {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.step-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: var(--border-light);
+    transition: all 0.3s;
+}
+
+.step.active .step-dot {
+    background-color: var(--color-primary);
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+.step.done .step-dot {
+    background-color: #10b981;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+}
+
+.step-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.step.active .step-label {
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.step-line {
+    width: 40px;
+    height: 2px;
+    background-color: var(--border-light);
+    margin-bottom: 20px;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}

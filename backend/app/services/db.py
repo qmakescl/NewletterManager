@@ -43,10 +43,23 @@ def get_db():
 def init_db() -> None:
     with get_db() as conn:
         conn.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                google_id TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                picture_url TEXT,
+                gmail_token_encrypted TEXT,
+                gmail_token_expiry DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_login_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS newsletters (
                 id TEXT PRIMARY KEY,
-                email_id TEXT UNIQUE NOT NULL,
-                gmail_id TEXT UNIQUE,
+                user_id TEXT,
+                email_id TEXT NOT NULL,
+                gmail_id TEXT,
                 published_date DATE NOT NULL,
                 article_count INTEGER DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -83,25 +96,24 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS api_call_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
                 call_date DATE NOT NULL,
-                call_count INTEGER DEFAULT 0,
-                UNIQUE(call_date)
+                call_count INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS senders (
                 id TEXT PRIMARY KEY,
+                user_id TEXT,
                 name TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL,
+                email TEXT NOT NULL,
                 is_active INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
-    # 기존 newsletters 테이블에 gmail_id 컬럼이 없으면 추가 (마이그레이션)
+    # 기존 DB 마이그레이션
     _migrate_add_gmail_id()
-
-    # 기존 .env 발신자를 시드 데이터로 마이그레이션
-    _seed_senders()
+    _migrate_add_user_id()
 
     logger.info("Database initialized: %s", DB_PATH)
 
@@ -122,43 +134,148 @@ def _migrate_add_gmail_id() -> None:
             logger.info("Migration: newsletters 테이블에 gmail_id 컬럼 추가 완료")
 
 
-def _seed_senders() -> None:
-    """senders 테이블이 비어있으면 .env의 newsletter_senders를 초기 데이터로 삽입."""
+def _migrate_add_user_id() -> None:
+    """기존 테이블에 user_id 컬럼이 없으면 추가하고, per-user 복합 UNIQUE 인덱스를 생성한다."""
     with get_db() as conn:
-        count = conn.execute("SELECT COUNT(*) as cnt FROM senders").fetchone()["cnt"]
-        if count > 0:
-            return
+        # newsletters
+        nl_cols = [r["name"] for r in conn.execute("PRAGMA table_info(newsletters)").fetchall()]
+        if "user_id" not in nl_cols:
+            conn.execute("ALTER TABLE newsletters ADD COLUMN user_id TEXT")
+            conn.execute("UPDATE newsletters SET user_id = 'legacy' WHERE user_id IS NULL")
+            logger.info("Migration: newsletters 테이블에 user_id 컬럼 추가 완료")
 
-        for email in settings.newsletter_senders:
+        # UNIQUE 인덱스 (기존 단일 UNIQUE → per-user 복합)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_newsletters_user_email_id "
+            "ON newsletters(user_id, email_id)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_newsletters_user_gmail_id "
+            "ON newsletters(user_id, gmail_id)"
+        )
+
+        # senders
+        s_cols = [r["name"] for r in conn.execute("PRAGMA table_info(senders)").fetchall()]
+        if "user_id" not in s_cols:
+            conn.execute("ALTER TABLE senders ADD COLUMN user_id TEXT")
+            conn.execute("UPDATE senders SET user_id = 'legacy' WHERE user_id IS NULL")
+            logger.info("Migration: senders 테이블에 user_id 컬럼 추가 완료")
+
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_senders_user_email "
+            "ON senders(user_id, email)"
+        )
+
+        # api_call_log
+        a_cols = [r["name"] for r in conn.execute("PRAGMA table_info(api_call_log)").fetchall()]
+        if "user_id" not in a_cols:
+            conn.execute("ALTER TABLE api_call_log ADD COLUMN user_id TEXT")
+            conn.execute("UPDATE api_call_log SET user_id = 'legacy' WHERE user_id IS NULL")
+            logger.info("Migration: api_call_log 테이블에 user_id 컬럼 추가 완료")
+
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_api_call_log_user_date "
+            "ON api_call_log(user_id, call_date)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# User CRUD
+# ---------------------------------------------------------------------------
+
+def get_user_by_google_id(google_id: str) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE google_id = ?", (google_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_user(
+    google_id: str,
+    email: str,
+    name: str,
+    picture_url: str | None = None,
+    gmail_token_encrypted: str | None = None,
+    gmail_token_expiry: str | None = None,
+) -> dict[str, Any]:
+    """사용자를 생성하거나 업데이트한다. 생성 시 UUID를 할당한다."""
+    existing = get_user_by_google_id(google_id)
+
+    with get_db() as conn:
+        if existing:
             conn.execute(
-                "INSERT OR IGNORE INTO senders (id, name, email) VALUES (?, ?, ?)",
-                (str(uuid.uuid4()), email.split("@")[0], email),
+                """UPDATE users
+                   SET email = ?, name = ?, picture_url = ?,
+                       gmail_token_encrypted = COALESCE(?, gmail_token_encrypted),
+                       gmail_token_expiry = COALESCE(?, gmail_token_expiry),
+                       last_login_at = CURRENT_TIMESTAMP
+                   WHERE google_id = ?""",
+                (email, name, picture_url, gmail_token_encrypted, gmail_token_expiry, google_id),
             )
-        logger.info("Seeded %d sender(s) from .env", len(settings.newsletter_senders))
+            user_id = existing["id"]
+        else:
+            user_id = str(uuid.uuid4())
+            conn.execute(
+                """INSERT INTO users (id, google_id, email, name, picture_url,
+                                      gmail_token_encrypted, gmail_token_expiry)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, google_id, email, name, picture_url,
+                 gmail_token_encrypted, gmail_token_expiry),
+            )
+
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    return dict(row)
+
+
+def get_user_by_id(user_id: str) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_user_gmail_token(
+    user_id: str,
+    gmail_token_encrypted: str,
+    gmail_token_expiry: str | None = None,
+) -> None:
+    """사용자의 Gmail 토큰을 업데이트한다."""
+    with get_db() as conn:
+        conn.execute(
+            """UPDATE users
+               SET gmail_token_encrypted = ?, gmail_token_expiry = ?
+               WHERE id = ?""",
+            (gmail_token_encrypted, gmail_token_expiry, user_id),
+        )
 
 
 # ---------------------------------------------------------------------------
 # Newsletter CRUD
 # ---------------------------------------------------------------------------
 
-def newsletter_exists(email_id: str) -> bool:
+def newsletter_exists(user_id: str, email_id: str) -> bool:
     with get_db() as conn:
         row = conn.execute(
-            "SELECT 1 FROM newsletters WHERE email_id = ?", (email_id,)
+            "SELECT 1 FROM newsletters WHERE user_id = ? AND email_id = ?",
+            (user_id, email_id),
         ).fetchone()
         return row is not None
 
 
-def newsletter_exists_by_gmail_id(gmail_id: str) -> bool:
+def newsletter_exists_by_gmail_id(user_id: str, gmail_id: str) -> bool:
     """Gmail 내부 ID로 뉴스레터 존재 여부를 확인한다 (조기 필터링용)."""
     with get_db() as conn:
         row = conn.execute(
-            "SELECT 1 FROM newsletters WHERE gmail_id = ?", (gmail_id,)
+            "SELECT 1 FROM newsletters WHERE user_id = ? AND gmail_id = ?",
+            (user_id, gmail_id),
         ).fetchone()
         return row is not None
 
 
 def insert_newsletter(
+    user_id: str,
     email_id: str,
     published_date: str,
     articles: list[dict[str, Any]],
@@ -168,9 +285,9 @@ def insert_newsletter(
 
     with get_db() as conn:
         conn.execute(
-            """INSERT INTO newsletters (id, email_id, gmail_id, published_date, article_count)
-               VALUES (?, ?, ?, ?, ?)""",
-            (newsletter_id, email_id, gmail_id, published_date, len(articles)),
+            """INSERT INTO newsletters (id, user_id, email_id, gmail_id, published_date, article_count)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (newsletter_id, user_id, email_id, gmail_id, published_date, len(articles)),
         )
 
         for art in articles:
@@ -197,12 +314,14 @@ def insert_newsletter(
     return newsletter_id
 
 
-def get_newsletters() -> list[dict[str, Any]]:
+def get_newsletters(user_id: str) -> list[dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
             """SELECT published_date, article_count
                FROM newsletters
-               ORDER BY published_date DESC"""
+               WHERE user_id = ?
+               ORDER BY published_date DESC""",
+            (user_id,),
         ).fetchall()
 
     return [
@@ -226,34 +345,35 @@ def _row_to_article(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def get_articles(
+    user_id: str,
     dates: list[str] | None = None,
     category: str | None = None,
     page: int = 1,
     size: int = 24,
 ) -> dict[str, Any]:
-    conditions: list[str] = []
-    params: list[Any] = []
+    conditions: list[str] = ["a.newsletter_id IN (SELECT id FROM newsletters WHERE user_id = ?)"]
+    params: list[Any] = [user_id]
 
     if dates:
         placeholders = ",".join("?" for _ in dates)
-        conditions.append(f"DATE(published_at) IN ({placeholders})")
+        conditions.append(f"DATE(a.published_at) IN ({placeholders})")
         params.extend(dates)
     if category:
-        conditions.append("category = ?")
+        conditions.append("a.category = ?")
         params.append(category)
 
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    where = "WHERE " + " AND ".join(conditions)
 
     with get_db() as conn:
         total_row = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM articles {where}", params
+            f"SELECT COUNT(*) as cnt FROM articles a {where}", params
         ).fetchone()
         total = total_row["cnt"]
 
         offset = (page - 1) * size
         rows = conn.execute(
-            f"""SELECT * FROM articles {where}
-                ORDER BY published_at DESC
+            f"""SELECT a.* FROM articles a {where}
+                ORDER BY a.published_at DESC
                 LIMIT ? OFFSET ?""",
             [*params, size, offset],
         ).fetchall()
@@ -264,10 +384,13 @@ def get_articles(
     }
 
 
-def get_article_by_id(article_id: str) -> dict[str, Any] | None:
+def get_article_by_id(user_id: str, article_id: str) -> dict[str, Any] | None:
     with get_db() as conn:
         row = conn.execute(
-            "SELECT * FROM articles WHERE id = ?", (article_id,)
+            """SELECT a.* FROM articles a
+               JOIN newsletters n ON a.newsletter_id = n.id
+               WHERE a.id = ? AND n.user_id = ?""",
+            (article_id, user_id),
         ).fetchone()
     return _row_to_article(row) if row else None
 
@@ -276,14 +399,15 @@ def get_article_by_id(article_id: str) -> dict[str, Any] | None:
 # AI 처리 관련
 # ---------------------------------------------------------------------------
 
-def get_unprocessed_articles(batch_size: int = 5) -> list[dict[str, Any]]:
+def get_unprocessed_articles(user_id: str, batch_size: int = 5) -> list[dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT * FROM articles
-               WHERE ai_processed = 0
-               ORDER BY created_at ASC
+            """SELECT a.* FROM articles a
+               JOIN newsletters n ON a.newsletter_id = n.id
+               WHERE a.ai_processed = 0 AND n.user_id = ?
+               ORDER BY a.created_at ASC
                LIMIT ?""",
-            (batch_size,),
+            (user_id, batch_size),
         ).fetchall()
     return [_row_to_article(r) for r in rows]
 
@@ -310,14 +434,16 @@ def update_article_ai_data(
 # ---------------------------------------------------------------------------
 
 
-def get_categories() -> list[dict[str, Any]]:
+def get_categories(user_id: str) -> list[dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT category as name, COUNT(*) as count
-               FROM articles
-               WHERE category IS NOT NULL AND category != ''
-               GROUP BY category
-               ORDER BY count DESC"""
+            """SELECT a.category as name, COUNT(*) as count
+               FROM articles a
+               JOIN newsletters n ON a.newsletter_id = n.id
+               WHERE a.category IS NOT NULL AND a.category != '' AND n.user_id = ?
+               GROUP BY a.category
+               ORDER BY count DESC""",
+            (user_id,),
         ).fetchall()
     return [{"name": row["name"], "count": row["count"]} for row in rows]
 
@@ -326,23 +452,23 @@ def get_categories() -> list[dict[str, Any]]:
 # API 호출 카운터
 # ---------------------------------------------------------------------------
 
-def get_daily_api_count(today: date | None = None) -> int:
+def get_daily_api_count(user_id: str, today: date | None = None) -> int:
     today = today or date.today()
     with get_db() as conn:
         row = conn.execute(
-            "SELECT call_count FROM api_call_log WHERE call_date = ?",
-            (today.isoformat(),),
+            "SELECT call_count FROM api_call_log WHERE user_id = ? AND call_date = ?",
+            (user_id, today.isoformat()),
         ).fetchone()
     return row["call_count"] if row else 0
 
 
-def increment_api_count(today: date | None = None) -> None:
+def increment_api_count(user_id: str, today: date | None = None) -> None:
     today = today or date.today()
     with get_db() as conn:
         conn.execute(
-            """INSERT INTO api_call_log (call_date, call_count) VALUES (?, 1)
-               ON CONFLICT(call_date) DO UPDATE SET call_count = call_count + 1""",
-            (today.isoformat(),),
+            """INSERT INTO api_call_log (user_id, call_date, call_count) VALUES (?, ?, 1)
+               ON CONFLICT(user_id, call_date) DO UPDATE SET call_count = call_count + 1""",
+            (user_id, today.isoformat()),
         )
 
 
@@ -350,28 +476,30 @@ def increment_api_count(today: date | None = None) -> None:
 # Sender CRUD
 # ---------------------------------------------------------------------------
 
-def get_senders() -> list[dict[str, Any]]:
+def get_senders(user_id: str) -> list[dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM senders ORDER BY created_at ASC"
+            "SELECT * FROM senders WHERE user_id = ? ORDER BY created_at ASC",
+            (user_id,),
         ).fetchall()
     return [dict(row) for row in rows]
 
 
-def get_active_sender_emails() -> list[str]:
+def get_active_sender_emails(user_id: str) -> list[str]:
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT email FROM senders WHERE is_active = 1"
+            "SELECT email FROM senders WHERE user_id = ? AND is_active = 1",
+            (user_id,),
         ).fetchall()
     return [row["email"] for row in rows]
 
 
-def add_sender(name: str, email: str) -> dict[str, Any]:
+def add_sender(user_id: str, name: str, email: str) -> dict[str, Any]:
     sender_id = str(uuid.uuid4())
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO senders (id, name, email) VALUES (?, ?, ?)",
-            (sender_id, name, email),
+            "INSERT INTO senders (id, user_id, name, email) VALUES (?, ?, ?, ?)",
+            (sender_id, user_id, name, email),
         )
         row = conn.execute(
             "SELECT * FROM senders WHERE id = ?", (sender_id,)
@@ -380,6 +508,7 @@ def add_sender(name: str, email: str) -> dict[str, Any]:
 
 
 def update_sender(
+    user_id: str,
     sender_id: str,
     name: str | None = None,
     email: str | None = None,
@@ -399,30 +528,30 @@ def update_sender(
         params.append(int(is_active))
 
     if not fields:
-        return get_sender_by_id(sender_id)
+        return get_sender_by_id(user_id, sender_id)
 
-    params.append(sender_id)
+    params.extend([sender_id, user_id])
     with get_db() as conn:
         conn.execute(
-            f"UPDATE senders SET {', '.join(fields)} WHERE id = ?", params
+            f"UPDATE senders SET {', '.join(fields)} WHERE id = ? AND user_id = ?", params
         )
         row = conn.execute(
-            "SELECT * FROM senders WHERE id = ?", (sender_id,)
+            "SELECT * FROM senders WHERE id = ? AND user_id = ?", (sender_id, user_id)
         ).fetchone()
     return dict(row) if row else None
 
 
-def delete_sender(sender_id: str) -> bool:
+def delete_sender(user_id: str, sender_id: str) -> bool:
     with get_db() as conn:
         cursor = conn.execute(
-            "DELETE FROM senders WHERE id = ?", (sender_id,)
+            "DELETE FROM senders WHERE id = ? AND user_id = ?", (sender_id, user_id)
         )
     return cursor.rowcount > 0
 
 
-def get_sender_by_id(sender_id: str) -> dict[str, Any] | None:
+def get_sender_by_id(user_id: str, sender_id: str) -> dict[str, Any] | None:
     with get_db() as conn:
         row = conn.execute(
-            "SELECT * FROM senders WHERE id = ?", (sender_id,)
+            "SELECT * FROM senders WHERE id = ? AND user_id = ?", (sender_id, user_id)
         ).fetchone()
     return dict(row) if row else None

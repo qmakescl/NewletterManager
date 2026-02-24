@@ -135,3 +135,42 @@
     font-weight: 600;
     margin-left: auto;
 }
+
+/* 뉴스레터 없는 평일 음영 */
+.calendar-day.missing-newsletter {
+    background-color: rgba(0, 0, 0, 0.04);
+    cursor: pointer;
+}
+
+.calendar-day.missing-newsletter:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="dark"] .calendar-day.missing-newsletter {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme="dark"] .calendar-day.missing-newsletter:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* 날짜별 동기화 중 스피너 */
+.calendar-day.syncing {
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+.sync-spinner {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--color-primary);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    bottom: 2px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
